@@ -34,8 +34,7 @@ Everything large lives on `/data` (the home directory has a 200G quota).
 | `/data/zijianwu/SurgCoT/Q/{train,test,data}.json` | Direct QA: one question + reference answer per item (test: 4,825) |
 | `/data/zijianwu/SurgCoT/Q_dq/…` | Decomposed CoT: main question guided by sub-questions (test: 4,811) |
 | `/data/zijianwu/SurgCoT/Q_dq_clue/…` | Decomposed + clue (test split is **empty** in the HF release) |
-| `/data/zijianwu/SurgCoT/GeneralSurg.tar.gz` | Videos + transcripts, 305 GiB |
-| `/data/zijianwu/SurgCoT/GeneralSurg/` | Extracted archive (*TODO*) |
+| `/data/zijianwu/SurgCoT/GeneralSurg/` | Extracted `GeneralSurg.tar.gz`: 5,931 videos + speech transcripts, 327 GiB (archive deleted) |
 | `/data/zijianwu/SurgCoT/frames/` | Preprocessed frames (*TODO*) |
 
 Each annotation item has this shape:
@@ -60,15 +59,23 @@ can be computed we need one of:
 2. a fallback: classify questions into the 5 classes and score free-form answers with an LLM judge
    (no mIoU possible without ground-truth time spans).
 
-## Step 1 — Preprocessing (`preprocess.py`, *TODO*)
+## Step 1 — Preprocessing (`preprocess.py`)
 
-- Decode each video referenced by the test split(s) and **uniformly sample 1 frame per second**.
-  Frame `k` is taken at timestamp `k` seconds, so frame indices double as seconds for temporal grounding.
-- Resize every frame to **210×360 (H×W)**. No cropping; aspect ratio is not preserved.
-- Save as JPEG: `frames/<procedure>/<video_stem>/%06d.jpg`.
-- Write `frames/index.json`: per video, the original fps, duration, and number of sampled frames.
-- Idempotent: videos that already have complete frames are skipped, so the script can be re-run.
-- Runs on CPU only (multiprocessing); no GPU needed.
+```bash
+python preprocess.py                         # all videos in Q/test.json + Q_dq/test.json
+python preprocess.py --limit 5 --out /tmp/f  # quick check on 5 videos
+```
+
+- Collects every video referenced by `--annotations` (default `Q/test.json Q_dq/test.json`: 1,992 videos, 389 h)
+  and **uniformly samples 1 frame per second** with ffmpeg's `fps` filter.
+  Frame `k` is the frame nearest to timestamp `k` seconds, so frame indices double as seconds for temporal grounding.
+- Resizes every frame to **210×360 (H×W)** (bicubic). No cropping; most source videos are 640×360 (16:9), so distortion is small.
+- Saves JPEGs as `frames/<path under GeneralSurg/ without .mp4>/%06d.jpg`, starting at `000000.jpg`
+  (about 5–15 KB per frame, roughly 20 GB for the test videos).
+- Writes `meta.json` per video (duration, original fps and size, number of frames) and merges them into `frames/index.json`.
+- Idempotent: each video is written to a `.tmp` folder and renamed when complete; videos with a `meta.json` are skipped.
+  Failures are listed in `frames/failures.json`.
+- CPU only (`--workers`, default 32 ffmpeg processes); no GPU needed.
 
 Open question: long videos can produce thousands of frames at 1 fps, which may exceed a model's context.
 Inference may need a cap (`--max-frames`, uniformly subsampled), with the frame timestamps passed to the model.
